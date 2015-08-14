@@ -69,10 +69,12 @@ internals.marshal = function (request, next) {
             hash = Crypto.createHash(options.algo);
 
             response.on('peek', function (d) {
+		    console.log('Peek: %s', d);
                 hash.update(d);
             });
 
             response.once('finish', function () {
+		    console.log('finish......');
                 var digest = hash.digest(options.encoding);
                 request.raw.res.addTrailers({ 'Etag': digest });
                 next(null, { skip: true });
@@ -101,6 +103,7 @@ internals.onPreResponse = function (request, reply) {
         }
 
         if (result.skip) {
+	    console.log('Skipping...');
             return reply.continue();
         }
  
