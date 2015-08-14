@@ -37,20 +37,21 @@ internals.marshal = function (request, next) {
     var options = request.server.plugins[Package.name].options;
     var response = request.response;
     var source = response.source;
+    var hash;
 
     switch (response.variety) {
         case 'plain':
             if (typeof source === 'object') {
-                return next(null, JSON.stringify(source));
+                return next(null, { contents: JSON.stringify(source) });
             }
             // Should we allow numbers?
             if (typeof source !== 'string') {
                 return next(Boom.badImplementation('Plain variety responses must be objects or strings'));
             }
-            return next(null, source);
+            return next(null, { contents: source });
         break;
         case 'buffer':
-            return next(null, source);
+            return next(null, { contents: source });
         break;
         case 'view':
             return request.server.render(source.template, source.context, function (err, rendered) {
@@ -59,25 +60,22 @@ internals.marshal = function (request, next) {
                     throw err;
                 }
 
-                return next(null, rendered);
+                return next(null, { contents: rendered });
             });
         break;
         case 'stream':
-            // We have to read all of the data off the stream to calculate the ETag
+            response.header('Trailer', 'Etag');
 
-            var pass = new (require('stream').PassThrough);
-            var data = new Buffer('');
+            hash = Crypto.createHash(options.algo);
 
-            source.on('data', function (d) {
-                pass.push(d);
-                data = Buffer.concat([data, d]);
-                
+            response.on('peek', function (d) {
+                hash.update(d);
             });
 
-            source.on('end', function () {
-                pass.push(null);
-                request.response.source = pass;
-                next(null, data);
+            response.once('finish', function () {
+                var digest = hash.digest(options.encoding);
+                request.raw.res.addTrailers({ 'Etag': digest });
+                next(null, { skip: true });
             });
         break;
         default:
@@ -96,14 +94,18 @@ internals.onPreResponse = function (request, reply) {
         return reply.continue();
     }
 
-    internals.marshal(request, function (err, contents) {
+    internals.marshal(request, function (err, result) {
 
         if (err) {
             throw err;
         }
 
+        if (result.skip) {
+            return reply.continue();
+        }
+ 
         var hash = Crypto.createHash(options.algo);
-        hash.update(contents);
+        hash.update(result.contents);
         response.etag(hash.digest(options.encoding), options.etagOptions);
 
         reply.continue();
